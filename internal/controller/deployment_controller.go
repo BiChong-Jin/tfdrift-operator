@@ -20,55 +20,107 @@ import (
 	"context"
 	"time"
 
+	"github.com/go-logr/logr"
+
 	appsv1 "k8s.io/api/apps/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-  corev1 "k8s.io/api/core/v1"
+	corev1 "k8s.io/api/core/v1"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 
-  "k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/record"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/Bichong-Jin/tfdrift-operator/internal/drift"
-	"github.com/go-logr/logr"
+	"github.com/<you>/tfdrift-operator/internal/drift"
 )
 
-// DeploymentReconciler reconciles a Deployment object
 type DeploymentReconciler struct {
 	client.Client
-  Log    logr.Logger
-  Recorder record.EventRecorder
+	Log      logr.Logger
+	Recorder record.EventRecorder
 }
 
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=apps,resources=deployments/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=apps,resources=deployments/finalizers,verbs=update
-
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the Deployment object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
+// RBAC (kubebuilder markers)
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;patch;update
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 func (r *DeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	log := r.Log.WithValues("deployment", req.NamespacedName)
 
-	// TODO(user): your logic here
+	var dep appsv1.Deployment
+	if err := r.Get(ctx, req.NamespacedName, &dep); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
 
+	// Only enforce when enabled
+	if dep.Labels == nil || dep.Labels[drift.LabelEnabled] != "true" {
+		return ctrl.Result{}, nil
+	}
+
+	expected := ""
+	if dep.Annotations != nil {
+		expected = dep.Annotations[drift.AnnExpectedHash]
+	}
+	if expected == "" {
+		// No baseline to compare; mark last checked and exit
+		return r.patchAnnotations(ctx, &dep, map[string]string{
+			drift.AnnLastCheckedAt: time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+
+	liveHash, err := drift.HashDeployment(&dep)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	patch := map[string]string{
+		drift.AnnLiveHash:      liveHash,
+		drift.AnnLastCheckedAt: now,
+	}
+
+	drifted := (liveHash != expected)
+	if drifted {
+		patch[drift.AnnDrifted] = "true"
+		if dep.Annotations == nil || dep.Annotations[drift.AnnDriftedAt] == "" {
+			patch[drift.AnnDriftedAt] = now
+		}
+
+		r.Recorder.Eventf(&dep, corev1.EventTypeWarning, "TerraformDriftDetected",
+			"Deployment drift detected: expectedHash=%s liveHash=%s", expected, liveHash)
+		log.Info("drift detected", "expected", expected, "live", liveHash)
+	} else {
+		patch[drift.AnnDrifted] = "false"
+	}
+
+	return r.patchAnnotations(ctx, &dep, patch)
+}
+
+func (r *DeploymentReconciler) patchAnnotations(ctx context.Context, dep *appsv1.Deployment, kv map[string]string) (ctrl.Result, error) {
+	orig := dep.DeepCopy()
+
+	if dep.Annotations == nil {
+		dep.Annotations = map[string]string{}
+	}
+	for k, v := range kv {
+		dep.Annotations[k] = v
+	}
+
+	if err := r.Patch(ctx, dep, client.MergeFrom(orig)); err != nil {
+		return ctrl.Result{}, err
+	}
 	return ctrl.Result{}, nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
 func (r *DeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.Recorder = mgr.GetEventRecorderFor("tfdrift-operator")
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&appsv1.Deployment{}).
-		Named("deployment").
 		Complete(r)
 }
+

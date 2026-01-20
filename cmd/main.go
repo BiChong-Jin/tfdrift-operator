@@ -178,14 +178,14 @@ func main() {
 
 	if err := (&controller.DeploymentReconciler{
 		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
+    Log:    ctrl.Log.WithName("controllers").WithName("Deployment"),	
+  }).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Deployment")
 		os.Exit(1)
 	}
 	if err := (&controller.ServiceReconciler{
 		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+    Log:    ctrl.Log.WithName("controllers").WithName("Service"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Service")
 		os.Exit(1)

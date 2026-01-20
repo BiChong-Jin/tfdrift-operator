@@ -18,45 +18,104 @@ package controller
 
 import (
 	"context"
+	"time"
+
+	"github.com/go-logr/logr"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
+	"k8s.io/client-go/tools/record"
+
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/Bichong-Jin/tfdrift-operator/internal/drift"
 )
 
-// ServiceReconciler reconciles a Service object
 type ServiceReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Log      logr.Logger
+	Recorder record.EventRecorder
 }
 
-// +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=core,resources=services/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=core,resources=services/finalizers,verbs=update
-
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the Service object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;patch;update
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	log := r.Log.WithValues("service", req.NamespacedName)
 
-	// TODO(user): your logic here
+	var svc corev1.Service
+	if err := r.Get(ctx, req.NamespacedName, &svc); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
 
+	if svc.Labels == nil || svc.Labels[drift.LabelEnabled] != "true" {
+		return ctrl.Result{}, nil
+	}
+
+	expected := ""
+	if svc.Annotations != nil {
+		expected = svc.Annotations[drift.AnnExpectedHash]
+	}
+	if expected == "" {
+		return r.patchAnnotations(ctx, &svc, map[string]string{
+			drift.AnnLastCheckedAt: time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+
+	liveHash, err := drift.HashService(&svc)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	patch := map[string]string{
+		drift.AnnLiveHash:      liveHash,
+		drift.AnnLastCheckedAt: now,
+	}
+
+	drifted := (liveHash != expected)
+	if drifted {
+		patch[drift.AnnDrifted] = "true"
+		if svc.Annotations == nil || svc.Annotations[drift.AnnDriftedAt] == "" {
+			patch[drift.AnnDriftedAt] = now
+		}
+
+		r.Recorder.Eventf(&svc, corev1.EventTypeWarning, "TerraformDriftDetected",
+			"Service drift detected: expectedHash=%s liveHash=%s", expected, liveHash)
+		log.Info("drift detected", "expected", expected, "live", liveHash)
+	} else {
+		patch[drift.AnnDrifted] = "false"
+	}
+
+	return r.patchAnnotations(ctx, &svc, patch)
+}
+
+func (r *ServiceReconciler) patchAnnotations(ctx context.Context, svc *corev1.Service, kv map[string]string) (ctrl.Result, error) {
+	orig := svc.DeepCopy()
+
+	if svc.Annotations == nil {
+		svc.Annotations = map[string]string{}
+	}
+	for k, v := range kv {
+		svc.Annotations[k] = v
+	}
+
+	if err := r.Patch(ctx, svc, client.MergeFrom(orig)); err != nil {
+		return ctrl.Result{}, err
+	}
 	return ctrl.Result{}, nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
 func (r *ServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.Recorder = mgr.GetEventRecorderFor("tfdrift-operator")
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Service{}).
-		Named("service").
 		Complete(r)
 }
+
+
+
