@@ -33,7 +33,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/<you>/tfdrift-operator/internal/drift"
+	"github.com/Bichong-Jin/tfdrift-operator/internal/drift"
 )
 
 type DeploymentReconciler struct {
