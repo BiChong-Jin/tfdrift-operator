@@ -16,22 +16,22 @@ import (
 // A minimal, stable view of a Deployment spec.
 // Only include fields you care about detecting drift for.
 type DeploymentFingerprint struct {
-	Replicas *int32             `json:"replicas,omitempty"`
+	Replicas *int32                    `json:"replicas,omitempty"`
 	Strategy appsv1.DeploymentStrategy `json:"strategy,omitempty"`
 	Template PodTemplateFingerprint    `json:"template"`
 }
 
 type PodTemplateFingerprint struct {
-	Labels      map[string]string        `json:"labels,omitempty"`
-	Annotations map[string]string        `json:"annotations,omitempty"`
-	Containers  []ContainerFingerprint   `json:"containers"`
+	Labels      map[string]string      `json:"labels,omitempty"`
+	Annotations map[string]string      `json:"annotations,omitempty"`
+	Containers  []ContainerFingerprint `json:"containers"`
 }
 
 type ContainerFingerprint struct {
-	Name      string            `json:"name"`
-	Image     string            `json:"image"`
-	Env       []EnvVarFingerprint `json:"env,omitempty"`
-	Ports     []ContainerPortFingerprint `json:"ports,omitempty"`
+	Name      string                      `json:"name"`
+	Image     string                      `json:"image"`
+	Env       []EnvVarFingerprint         `json:"env,omitempty"`
+	Ports     []ContainerPortFingerprint  `json:"ports,omitempty"`
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
@@ -42,8 +42,8 @@ type EnvVarFingerprint struct {
 }
 
 type ContainerPortFingerprint struct {
-	Name          string `json:"name,omitempty"`
-	ContainerPort int32  `json:"containerPort"`
+	Name          string          `json:"name,omitempty"`
+	ContainerPort int32           `json:"containerPort"`
 	Protocol      corev1.Protocol `json:"protocol,omitempty"`
 }
 
@@ -114,17 +114,17 @@ func fingerprintPodTemplate(t corev1.PodTemplateSpec) PodTemplateFingerprint {
 // ---- Service hashing ----
 
 type ServiceFingerprint struct {
-	Type      corev1.ServiceType `json:"type"`
-	Selector  map[string]string  `json:"selector,omitempty"`
-	Ports     []ServicePortFingerprint `json:"ports"`
+	Type     corev1.ServiceType       `json:"type"`
+	Selector map[string]string        `json:"selector,omitempty"`
+	Ports    []ServicePortFingerprint `json:"ports"`
 }
 
 type ServicePortFingerprint struct {
-	Name       string        `json:"name,omitempty"`
+	Name       string          `json:"name,omitempty"`
 	Protocol   corev1.Protocol `json:"protocol,omitempty"`
-	Port       int32         `json:"port"`
-	TargetPort string        `json:"targetPort"`
-	NodePort   int32         `json:"nodePort,omitempty"`
+	Port       int32           `json:"port"`
+	TargetPort string          `json:"targetPort"`
+	NodePort   int32           `json:"nodePort,omitempty"`
 }
 
 func HashService(svc *corev1.Service) (string, error) {
@@ -183,4 +183,3 @@ func canonicalizeMap(m map[string]string) {
 		m[k] = strings.TrimSpace(v)
 	}
 }
-

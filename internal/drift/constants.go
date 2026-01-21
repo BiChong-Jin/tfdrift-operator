@@ -9,4 +9,3 @@ const (
 	AnnLastCheckedAt = "tfdrift.jin.dev/last-checked-at"
 	AnnDriftedAt     = "tfdrift.jin.dev/drifted-at"
 )
-

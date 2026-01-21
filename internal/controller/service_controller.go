@@ -116,6 +116,3 @@ func (r *ServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&corev1.Service{}).
 		Complete(r)
 }
-
-
-
