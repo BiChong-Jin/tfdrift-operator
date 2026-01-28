@@ -1,8 +1,32 @@
 # tfdrift-operator
-// TODO(user): Add simple overview of use/purpose
+
+A Kubernetes operator that detects and tracks Terraform drift in Kubernetes resources by comparing live resource state against expected baselines using hash-based comparison.
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+
+The tfdrift-operator monitors Kubernetes Deployments and Services to identify when their live state diverges from an expected baseline (typically defined in Terraform or other IaC configurations). It uses SHA256 hash fingerprinting to create stable, deterministic comparisons of resource specs, ignoring non-deterministic fields.
+
+**Key Features:**
+- **Non-invasive design**: Uses annotations and labels instead of custom CRDs or webhooks
+- **Stable hashing**: Canonicalizes resource specs (sorts containers, ports, env vars) for reliable drift detection
+- **Event-driven alerts**: Emits Kubernetes Warning events (`TerraformDriftDetected`) when drift is found
+- **Audit trail**: Records drift timestamps and last-checked times via annotations
+- **Selective monitoring**: Only watches resources labeled with `tfdrift.jin.dev/enabled=true`
+
+**How it works:**
+1. Label resources with `tfdrift.jin.dev/enabled=true` to enable monitoring
+2. Set the expected baseline hash via `tfdrift.jin.dev/spec-hash` annotation
+3. The operator continuously compares live hash against the expected hash
+4. When drift is detected, it updates annotations and emits a Kubernetes event
+
+**Annotations used:**
+| Annotation | Description |
+|------------|-------------|
+| `tfdrift.jin.dev/spec-hash` | Expected hash (baseline from Terraform) |
+| `tfdrift.jin.dev/live-hash` | Current hash of the live resource |
+| `tfdrift.jin.dev/drifted` | Boolean flag indicating drift status |
+| `tfdrift.jin.dev/drifted-at` | Timestamp when drift was first detected |
+| `tfdrift.jin.dev/last-checked-at` | Last reconciliation timestamp |
 
 ## Getting Started
 
@@ -111,7 +135,18 @@ previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml
 is manually re-applied afterwards.
 
 ## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
+
+Contributions are welcome! Here's how you can help:
+
+1. **Report bugs**: Open an issue describing the bug and steps to reproduce
+2. **Suggest features**: Open an issue to discuss new drift detection capabilities or resource types
+3. **Submit PRs**: Fork the repo, create a feature branch, and submit a pull request
+4. **Extend resource support**: Add drift detection for additional Kubernetes resource types in `internal/drift/`
+
+Before submitting a PR:
+- Run `make test` to ensure all tests pass
+- Run `make lint` to check code style
+- Add tests for new functionality
 
 **NOTE:** Run `make help` for more information on all potential `make` targets
 
