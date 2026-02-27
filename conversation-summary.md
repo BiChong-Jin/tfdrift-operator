@@ -44,6 +44,7 @@ The same pattern exists in service_controller.go for Services.
 
 Under the hood, controller-runtime uses a Kubernetes Informer (from client-go). Here's what that means:
 
+```
 Kubernetes API Server
 │
 │ LIST (initial full sync)
@@ -60,6 +61,7 @@ Work Queue
 │ dequeues {namespace/name}
 ▼
 Reconcile(ctx, req)
+```
 
 - On startup: does a LIST to populate the local cache with all existing resources
 - Then opens a long-lived WATCH stream to the API server — the API server pushes change events in real time
