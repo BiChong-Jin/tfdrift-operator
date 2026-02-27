@@ -5,6 +5,7 @@
 The tfdrift-operator detects **Terraform drift** in Kubernetes resources. It compares the live state of Deployments and Services against an expected baseline hash, and emits a warning event when they diverge.
 
 **Key design choices:**
+
 - No custom CRDs — uses annotations and labels only
 - Read-only — detects drift but does not revert it
 - Opt-in — only watches resources labeled `tfdrift.jin.dev/enabled=true`
@@ -23,6 +24,66 @@ internal/drift/hash.go
   ├── HashDeployment()
   └── HashService()
 ```
+
+How Resources Are Watched
+
+1. Registration — SetupWithManager
+
+ctrl.NewControllerManagedBy(mgr).
+For(&appsv1.Deployment{}).
+Complete(r)
+
+.For(&appsv1.Deployment{}) tells controller-runtime: "watch all Deployment objects cluster-wide and send any
+create/update/delete events to my reconciler."
+
+The same pattern exists in service_controller.go for Services.
+
+---
+
+2. The Watch Mechanism — Informers
+
+Under the hood, controller-runtime uses a Kubernetes Informer (from client-go). Here's what that means:
+
+Kubernetes API Server
+│
+│ LIST (initial full sync)
+│ WATCH (streaming connection, long-lived HTTP)
+▼
+Informer / Cache
+(in-memory store of all Deployments/Services)
+│
+│ on ADD / UPDATE / DELETE event
+▼
+Work Queue
+(rate-limited, deduplicating)
+│
+│ dequeues {namespace/name}
+▼
+Reconcile(ctx, req)
+
+- On startup: does a LIST to populate the local cache with all existing resources
+- Then opens a long-lived WATCH stream to the API server — the API server pushes change events in real time
+- Events are fed into a work queue — if the same object changes 5 times quickly, it gets deduplicated into 1
+  reconcile call
+- The reconciler only receives a {namespace/name} — it then does a fresh r.Get() to read current state from the
+  cache
+
+---
+
+3. The Opt-in Filter (inside Reconcile, not at the watch level)
+
+The operator does not filter at the watch level. It watches all Deployments/Services, then checks the label inside
+Reconcile:
+
+// deployment_controller.go:59
+if dep.Labels == nil || dep.Labels[drift.LabelEnabled] != "true" {
+return ctrl.Result{}, nil // skip — not opted in
+}
+
+This means every Deployment change triggers a reconcile call, but unmonitored resources are dropped immediately.
+This is a common pattern — filtering at the informer level is possible but adds complexity.
+
+---
 
 ---
 
@@ -86,9 +147,9 @@ Reconcile(ctx, req)
 
 ## 5. Cache vs Network Speed
 
-| | Latency |
-|---|---|
-| Memory (cache) | ~100 nanoseconds |
+|                      | Latency           |
+| -------------------- | ----------------- |
+| Memory (cache)       | ~100 nanoseconds  |
 | Network (API server) | ~1–5 milliseconds |
 
 **~10,000–50,000x faster.** Without the cache, every reconcile would hit the API server directly, putting heavy load on the most critical cluster component.
@@ -139,11 +200,13 @@ Each operator process opens its own independent WATCH streams. Across different 
 ```
 
 At scale this becomes a real problem ("operator sprawl"):
+
 - Every event fans out to all watchers simultaneously
 - API server CPU/memory climbs
 - Eventually the API server starts throttling requests
 
 **Mitigations:**
+
 - Consolidate related controllers into one binary
 - Only watch resource types you actually need
 - Use label selectors on watches to filter at the API server level
